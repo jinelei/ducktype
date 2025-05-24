@@ -1,8 +1,8 @@
 package com.jinelei.ducktype.sample;
 
-//import com.jinelei.ducktype.annotation.DuckType;
+import com.jinelei.ducktype.annotation.DuckType;
 
-//@DuckType
+@DuckType
 @FunctionalInterface
 public interface SampleInterface {
     void execute();

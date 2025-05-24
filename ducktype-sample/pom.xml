@@ -35,6 +35,13 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.14.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.jinelei</groupId>
+                        <artifactId>ducktype-processor</artifactId>
+                        <version>1.0.0</version>
+                    </dependency>
+                </dependencies>
                 <configuration>
                     <source>17</source>
                     <target>17</target>
