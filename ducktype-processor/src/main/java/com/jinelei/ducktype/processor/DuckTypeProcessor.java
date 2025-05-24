@@ -5,7 +5,12 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
+import javax.tools.FileObject;
+import javax.tools.StandardLocation;
 import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileWriter;
+import java.io.InputStream;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -76,6 +81,8 @@ public class DuckTypeProcessor extends AbstractProcessor {
 
                         if (allMethodsMatch) {
                             // 为类添加实现接口的代码
+
+                            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类源码：%s".formatted(classElement.toString()));
                             addInterfaceImplementation(classElement, duckTypeInterface);
                         }
                     }
@@ -125,18 +132,15 @@ public class DuckTypeProcessor extends AbstractProcessor {
      * @param classElement     类元素
      * @param interfaceElement 接口元素
      */
-    private void addInterfaceImplementation(TypeElement classElement, TypeElement interfaceElement) {
+    private void addInterfaceImplementation(TypeElement classElement, TypeElement interfaceElement) throws RuntimeException {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "为类添加实现接口的代码：类名: %s, 接口名: %s".formatted(classElement.getSimpleName(), interfaceElement.getQualifiedName()));
         // 使用Eclipse JDT解析源代码
         ASTParser parser = ASTParser.newParser(AST.JLS17);
         parser.setKind(ASTParser.K_COMPILATION_UNIT);
-        parser.setSource(classElement.toString().toCharArray());
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "解析源代码：%s".formatted(classElement.toString()));
+        parser.setSource(getClassSource(classElement).toCharArray());
         parser.setResolveBindings(true);
         CompilationUnit cu = (CompilationUnit) parser.createAST(null);
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "解析源代码成功： %b®".formatted(Objects.isNull(cu)));
-        Arrays.stream(cu.getProblems()).filter(IProblem::isError).map(IProblem::getMessage)
-                        .forEach(s-> processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "解析失败信息：%s".formatted(s)));
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "解析源代码成功： %b".formatted(Objects.nonNull(cu)));
 
         // 查找类声明
         List<TypeDeclaration> types = cu.types();
@@ -146,39 +150,65 @@ public class DuckTypeProcessor extends AbstractProcessor {
                 processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到类声明：%s".formatted(type.getName().toString()));
                 // 添加接口实现
                 AST ast = cu.getAST();
-                ASTRewrite rewrite = ASTRewrite.create(ast);
-                Name interfaceName = ast.newSimpleName(interfaceElement.getSimpleName().toString());
-                type.superInterfaceTypes().add(interfaceName);
+                SimpleName typeName = ast.newSimpleName(interfaceElement.getSimpleName().toString());
+                SimpleType interfaceType = ast.newSimpleType(typeName);
+                type.superInterfaceTypes().add(interfaceType);
 
-                // 应用修改
-                Document document = new Document(classElement.toString());
-                TextEdit edits = rewrite.rewriteAST(document, null);
-                try {
-                    edits.apply(document);
-                    // 保存修改后的代码
-                    // 这里需要实现保存到文件的逻辑
-                    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "修改后的代码：%s".formatted(document.get()));
-                    // 保存到target/generated-sources
-                    File file = new File("target/generated-sources");
-                    if (!file.exists()) {
-                        file.mkdirs();
-                    }
-                    file = new File(file, classElement.getSimpleName() + ".java");
-                    if (!file.exists()) {
-                        file.createNewFile();
-                        try (java.io.FileWriter writer = new java.io.FileWriter(file)) {
-                            writer.write(document.get());
-                            writer.flush();
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "保存修改后的代码失败：%s".formatted(e.getMessage()));
+                // 为实现的方法添加 @Override 注解
+                for (Element methodElement : interfaceElement.getEnclosedElements()) {
+                    if (methodElement.getKind() == ElementKind.METHOD) {
+                        ExecutableElement interfaceMethod = (ExecutableElement) methodElement;
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到接口方法：%s".formatted(interfaceMethod.getSimpleName()));
+                        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类方法数量：%d".formatted(type.getMethods().length));
+                        for (MethodDeclaration classMethod : type.getMethods()) {
+                            if (classMethod.getName().toString().equals(interfaceMethod.getSimpleName().toString())
+                                    && classMethod.parameters().size() == interfaceMethod.getParameters().size()
+                            ) {
+                                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到类方法：%s".formatted(classMethod.getName().toString()));
+                                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "方法匹配成功：%s".formatted(classMethod.getName().toString()));
+                                // 添加 @Override 注解
+                                NormalAnnotation overrideAnnotation = ast.newNormalAnnotation();
+                                overrideAnnotation.setTypeName(ast.newSimpleName("Override"));
+                                classMethod.modifiers().add(0, overrideAnnotation);
+                            }
                         }
                     }
-                } catch (Exception e) {
-                    e.printStackTrace();
                 }
-                break;
             }
+        }
+        try {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "修改后的代码：%s".formatted(cu.toString()));
+            // 保存到target/generated-sources
+            File dir = new File("target/generated-sources");
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            try (FileWriter writer = new FileWriter(new File(dir, classElement.getSimpleName().toString() + ".java"))) {
+                writer.write(cu.toString());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private String getClassSource(TypeElement classElement) throws RuntimeException {
+        try {
+            // 获取类的全限定名
+            String qualifiedName = classElement.getQualifiedName().toString();
+            // 使用 Filer 打开源文件
+            FileObject fileObject = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, "", qualifiedName.replace('.', '/') + ".java");
+            // 读取文件内容
+            try (InputStream in = fileObject.openInputStream()) {
+                byte[] bytes = in.readAllBytes();
+                String sourceCode = new String(bytes);
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类源码：%s".formatted(sourceCode));
+                return sourceCode;
+            }
+        } catch (Exception e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "获取源码失败: " + e.getMessage());
+            throw new RuntimeException("Source file not found: " + classElement.getQualifiedName().toString());
         }
     }
 }
