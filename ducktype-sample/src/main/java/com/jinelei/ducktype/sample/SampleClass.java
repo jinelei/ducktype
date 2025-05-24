@@ -17,7 +17,7 @@ public class SampleClass {
 //    }
 
     public static void main(String[] args) throws IOException, BadLocationException {
-        String sourceCode = "public class MyClass {}";
+        String sourceCode = "public class MyClass {\n}";
         ASTParser parser = ASTParser.newParser(AST.JLS17);
         parser.setSource(sourceCode.toCharArray());
         CompilationUnit cu = (CompilationUnit) parser.createAST(null);
@@ -25,10 +25,11 @@ public class SampleClass {
         for (Object type : cu.types()) {
             if (type instanceof TypeDeclaration) {
                 TypeDeclaration classDecl = (TypeDeclaration) type;
+                System.out.println("TypeDeclaration: %s".formatted(classDecl.getName().toString()));
                 AST ast = cu.getAST();
                 ASTRewrite rewrite = ASTRewrite.create(ast);
-                Name interfaceName = ast.newSimpleName("MyInterface");
-                classDecl.superInterfaceTypes().add(interfaceName);
+                SimpleType interfaceType = ast.newSimpleType(ast.newSimpleName("Serializable"));
+                classDecl.superInterfaceTypes().add(interfaceType);
 
                 Document document = new Document(sourceCode);
                 TextEdit edits = rewrite.rewriteAST(document, null);
