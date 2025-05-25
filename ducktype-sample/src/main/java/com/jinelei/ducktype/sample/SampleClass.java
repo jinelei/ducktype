@@ -7,4 +7,8 @@ public class SampleClass {
         System.out.println("SampleClass is executing.");
     }
 
+    public String getName() {
+        return className;
+    }
+
 }
