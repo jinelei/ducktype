@@ -6,10 +6,10 @@ import javax.lang.model.element.*;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
+import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.InputStream;
+import java.io.*;
+import java.nio.file.Files;
 import java.util.*;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -78,6 +78,24 @@ public class DuckTypeProcessor extends AbstractProcessor {
     private void modifySourceCode(TypeElement classElement, TypeElement interfaceElement) throws RuntimeException {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "为类【%s】添加实现接口【%s】".formatted(classElement.getSimpleName(), interfaceElement.getSimpleName()));
         // 使用Eclipse JDT解析源代码
+        // 获取类的全限定名
+        String qualifiedName = classElement.getQualifiedName().toString();
+        FileObject sourceFile;
+        String sourceCode = null;
+        try {
+            sourceFile = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, "", qualifiedName.replace('.', '/') + ".java");
+            // 使用 Filer 打开源文件
+            // 读取文件内容
+            try (InputStream in = sourceFile.openInputStream()) {
+                byte[] bytes = in.readAllBytes();
+                sourceCode = new String(bytes);
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "类源码：--------------------\n%s".formatted(sourceCode));
+            }
+        } catch (Exception e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "获取源码失败: " + e.getMessage());
+            throw new RuntimeException("Source file not found: " + qualifiedName);
+        }
+
         ASTParser parser = ASTParser.newParser(AST.getJLSLatest());
         parser.setKind(ASTParser.K_COMPILATION_UNIT);
         parser.setSource(getClassSource(classElement).toCharArray());
@@ -114,11 +132,56 @@ public class DuckTypeProcessor extends AbstractProcessor {
                                         });
                             });
                 });
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的代码：--------------------\n%s".formatted(cu.toString()));
+        // Writer AST 写回文件
+//        try (Writer writer = sourceFile.openWriter()) {
+//            writer.write(cu.toString());
+//            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的代码写入文件成功");
+//        } catch (IOException e) {
+//            throw new RuntimeException(e);
+//        }
 
+        // 使用 Filer 创建新的源文件
+        File file = Optional.of(sourceFile)
+                .map(FileObject::toUri)
+                .map(File::new).orElseThrow(() -> new RuntimeException("源码文件未找到"));
+        if (file.delete()) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "删除原文件成功");
+        } else {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "删除原文件失败");
+        }
         try {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的代码：--------------------\n%s".formatted(cu.toString()));
+            if (file.createNewFile()) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "创建新文件成功");
+            }
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "创建新文件失败: " + e.getMessage());
+            throw new RuntimeException(e);
+        }
+        try (FileWriter writer = new FileWriter(file)) {
+            writer.write(cu.toString());
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的代码写入文件成功");
+        } catch (IOException e) {
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "修改后的代码写入文件失败: " + e.getMessage());
+            throw new RuntimeException(e);
+        }
+//        try {
+//            JavaFileObject jfo = processingEnv.getFiler().createSourceFile(qualifiedName);
+//            try (java.io.Writer writer = jfo.openWriter()) {
+//                writer.write(cu.toString());
+//            }
+//        } catch (Exception e) {
+//            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "写入修改后的代码失败: " + e.getMessage());
+//            e.printStackTrace();
+//        }
+//        Files.write(sourceFile, cu.toString().getBytes());
+//        writeSources(classElement, cu);
+    }
+
+    private void writeSources(TypeElement classElement, CompilationUnit cu) {
+        try {
             // 保存到target/generated-sources
-            File dir = new File("target/generated-sources");
+            File dir = new File("ducktype-sample/target/generated-sources/annotations");
             if (!dir.exists()) {
                 if (!dir.mkdirs()) {
                     throw new RuntimeException("创建目录失败: " + dir.getAbsolutePath());
