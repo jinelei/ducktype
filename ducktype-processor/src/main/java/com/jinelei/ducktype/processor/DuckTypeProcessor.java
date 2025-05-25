@@ -6,11 +6,10 @@ import javax.lang.model.element.*;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic;
 import javax.tools.FileObject;
-import javax.tools.JavaFileObject;
 import javax.tools.StandardLocation;
 import java.io.*;
-import java.nio.file.Files;
 import java.util.*;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -23,10 +22,66 @@ public class DuckTypeProcessor extends AbstractProcessor {
      * 安全地将 List 转换为 List<Object> 类型，不创建新对象
      */
     @SuppressWarnings({"rawtypes", "unchecked"})
-    private static final Function<List, List<Object>> safeConvertToListObject = (List rawList) -> (List<Object>) rawList;
+    private final Function<List, List<Object>> safeConvertToListObject = (List rawList) -> (List<Object>) rawList;
 
-    private static final Predicate<MethodDeclaration> overrideAnnotationPresent = mmm -> safeConvertToListObject.apply(mmm.modifiers()).stream().filter(i -> i instanceof Annotation).noneMatch(i -> ((Annotation) i).getTypeName().toString().equals("Override"));
+    /**
+     * 是否有Override注解
+     */
+    private final Predicate<MethodDeclaration> overrideAnnotationPresent = mmm -> safeConvertToListObject.apply(mmm.modifiers()).stream().filter(i -> i instanceof Annotation).noneMatch(i -> ((Annotation) i).getTypeName().toString().equals("Override"));
 
+    /**
+     * 读取全部字节数组
+     */
+    private final Function<FileObject, String> readSourceFromSourceFile = object -> {
+        try (InputStream in = object.openInputStream()) {
+            byte[] bytes = in.readAllBytes();
+            return new String(bytes);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    };
+
+    /**
+     * 加载FileObject
+     */
+    private final BiFunction<StandardLocation, String, FileObject> loadSourceFileObject = (location, path) -> {
+        try {
+            return processingEnv.getFiler().getResource(location, "", path);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    };
+
+    /**
+     * 获取方法签名，全限定名
+     */
+    private final Function<ExecutableElement, String> getMethodSignature = element -> {
+        if (element == null) {
+            return "";
+        }
+        // 获取返回类型的全限定名
+        String returnType = Optional.of(element).map(ExecutableElement::getReturnType).map(TypeMirror::toString).orElse("");
+
+        // 获取方法名
+        String methodName = element.getSimpleName().toString();
+
+        // 获取参数类型的全限定名
+        String params = element.getParameters().stream()
+                .map(t -> Optional.ofNullable(t).map(VariableElement::asType).map(TypeMirror::toString).orElse(""))
+                .collect(Collectors.joining(", "));
+
+        // 获取抛出异常类型的全限定名
+        String exceptions = element.getThrownTypes().stream()
+                .map(exceptionType -> Optional.ofNullable(exceptionType).map(TypeMirror::toString).orElse(""))
+                .collect(Collectors.joining(", "));
+
+        // 拼接方法签名
+        String signature = "%s %s(%s)".formatted(returnType, methodName, params);
+        if (!exceptions.isEmpty()) {
+            signature += " throws " + exceptions;
+        }
+        return signature;
+    };
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
@@ -50,8 +105,8 @@ public class DuckTypeProcessor extends AbstractProcessor {
                     boolean alreadyImplemented = classElement.getInterfaces().stream().anyMatch(t -> t.toString().equals(interfaceElement.getQualifiedName().toString()));
                     if (!alreadyImplemented) {
                         // 检查方法签名是否匹配
-                        List<String> classMethodSignatureList = classElement.getEnclosedElements().stream().filter(t -> t.getKind() == ElementKind.METHOD).map(t -> getMethodSignature((ExecutableElement) t)).toList();
-                        List<String> interfaceMethodSignatureList = interfaceElement.getEnclosedElements().stream().filter(t -> t.getKind() == ElementKind.METHOD).map(t -> getMethodSignature((ExecutableElement) t)).toList();
+                        List<String> classMethodSignatureList = classElement.getEnclosedElements().stream().filter(t -> t.getKind() == ElementKind.METHOD).map(t -> getMethodSignature.apply((ExecutableElement) t)).toList();
+                        List<String> interfaceMethodSignatureList = interfaceElement.getEnclosedElements().stream().filter(t -> t.getKind() == ElementKind.METHOD).map(t -> getMethodSignature.apply((ExecutableElement) t)).toList();
                         boolean allInterfaceMethodsExist = new HashSet<>(classMethodSignatureList).containsAll(interfaceMethodSignatureList);
                         if (allInterfaceMethodsExist) {
                             // 为类添加实现接口的代码
@@ -77,28 +132,17 @@ public class DuckTypeProcessor extends AbstractProcessor {
      */
     private void modifySourceCode(TypeElement classElement, TypeElement interfaceElement) throws RuntimeException {
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "为类【%s】添加实现接口【%s】".formatted(classElement.getSimpleName(), interfaceElement.getSimpleName()));
+        final Function<String, String> fetchResolveNameFromPackageName = qualifiedName -> qualifiedName.replace('.', '/') + ".java";
         // 使用Eclipse JDT解析源代码
         // 获取类的全限定名
         String qualifiedName = classElement.getQualifiedName().toString();
-        FileObject sourceFile;
-        String sourceCode = null;
-        try {
-            sourceFile = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, "", qualifiedName.replace('.', '/') + ".java");
-            // 使用 Filer 打开源文件
-            // 读取文件内容
-            try (InputStream in = sourceFile.openInputStream()) {
-                byte[] bytes = in.readAllBytes();
-                sourceCode = new String(bytes);
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "类源码：--------------------\n%s".formatted(sourceCode));
-            }
-        } catch (Exception e) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "获取源码失败: " + e.getMessage());
-            throw new RuntimeException("Source file not found: " + qualifiedName);
-        }
+        FileObject sourceFile = loadSourceFileObject.apply(StandardLocation.SOURCE_PATH, fetchResolveNameFromPackageName.apply(qualifiedName));
+        String sourceCode = readSourceFromSourceFile.apply(sourceFile);
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "类源码：--------------------\n%s".formatted(sourceCode));
 
         ASTParser parser = ASTParser.newParser(AST.getJLSLatest());
         parser.setKind(ASTParser.K_COMPILATION_UNIT);
-        parser.setSource(getClassSource(classElement).toCharArray());
+        parser.setSource(sourceCode.toCharArray());
         parser.setResolveBindings(true);
         CompilationUnit cu = (CompilationUnit) parser.createAST(null);
         AST ast = cu.getAST();
@@ -112,17 +156,14 @@ public class DuckTypeProcessor extends AbstractProcessor {
                     SimpleType interfaceType = ast.newSimpleType(typeName);
                     safeConvertToListObject.apply(t.superInterfaceTypes()).add(interfaceType);
 
-                    // 找到该类的所有方法
-                    Map<String, List<MethodDeclaration>> classMethodBySignatureMap = Arrays.stream(t.getMethods()).collect(Collectors.groupingBy(this::getMethodSignature));
-
                     // 为实现的方法添加 @Override 注解
                     interfaceElement.getEnclosedElements().stream()
                             .filter(mm -> mm instanceof ExecutableElement)
                             .map(e -> ((ExecutableElement) e))
                             .forEach(mm -> {
-                                final String interfaceMethodSignature = getMethodSignature(mm);
+                                final String interfaceMethodSignature = getMethodSignature.apply(mm);
                                 Arrays.stream(t.getMethods())
-                                        .filter(mmm -> interfaceMethodSignature.equals(getMethodSignature(mm)))
+                                        .filter(mmm -> interfaceMethodSignature.equals(getMethodSignature.apply(mm)))
                                         .filter(overrideAnnotationPresent)
                                         .forEach(mmm -> {
                                             // 添加 @Override 注解
@@ -132,14 +173,8 @@ public class DuckTypeProcessor extends AbstractProcessor {
                                         });
                             });
                 });
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的代码：--------------------\n%s".formatted(cu.toString()));
-        // Writer AST 写回文件
-//        try (Writer writer = sourceFile.openWriter()) {
-//            writer.write(cu.toString());
-//            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的代码写入文件成功");
-//        } catch (IOException e) {
-//            throw new RuntimeException(e);
-//        }
+
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的源代码：--------------------\n%s".formatted(cu.toString()));
 
         // 使用 Filer 创建新的源文件
         File file = Optional.of(sourceFile)
@@ -165,17 +200,6 @@ public class DuckTypeProcessor extends AbstractProcessor {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "修改后的代码写入文件失败: " + e.getMessage());
             throw new RuntimeException(e);
         }
-//        try {
-//            JavaFileObject jfo = processingEnv.getFiler().createSourceFile(qualifiedName);
-//            try (java.io.Writer writer = jfo.openWriter()) {
-//                writer.write(cu.toString());
-//            }
-//        } catch (Exception e) {
-//            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "写入修改后的代码失败: " + e.getMessage());
-//            e.printStackTrace();
-//        }
-//        Files.write(sourceFile, cu.toString().getBytes());
-//        writeSources(classElement, cu);
     }
 
     private void writeSources(TypeElement classElement, CompilationUnit cu) {
@@ -195,113 +219,6 @@ public class DuckTypeProcessor extends AbstractProcessor {
         } catch (Exception e) {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "修改源代码失败: " + e.getMessage());
         }
-    }
-
-    private String getClassSource(TypeElement classElement) throws RuntimeException {
-        try {
-            // 获取类的全限定名
-            String qualifiedName = classElement.getQualifiedName().toString();
-            // 使用 Filer 打开源文件
-            FileObject fileObject = processingEnv.getFiler().getResource(StandardLocation.SOURCE_PATH, "", qualifiedName.replace('.', '/') + ".java");
-            // 读取文件内容
-            try (InputStream in = fileObject.openInputStream()) {
-                byte[] bytes = in.readAllBytes();
-                String sourceCode = new String(bytes);
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "类源码：--------------------\n%s".formatted(sourceCode));
-                return sourceCode;
-            }
-        } catch (Exception e) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "获取源码失败: " + e.getMessage());
-            throw new RuntimeException("Source file not found: " + classElement.getQualifiedName().toString());
-        }
-    }
-
-    /**
-     * 获取 MethodDeclaration 的全限定方法签名
-     *
-     * @param methodDeclaration 方法声明
-     * @return 全限定方法签名
-     */
-    private String getMethodSignature(MethodDeclaration methodDeclaration) {
-        StringBuilder signature = new StringBuilder();
-
-        // 获取全限定返回类型
-        Type returnType2 = Optional.ofNullable(methodDeclaration).map(MethodDeclaration::getReturnType2).orElseThrow(() -> new RuntimeException("返回类型未找到"));
-        String returnType = Optional.of(returnType2)
-                .map(Type::resolveBinding)
-                .map(ITypeBinding::getQualifiedName)
-                .orElse(returnType2.toString());
-        signature.append(returnType).append(" ");
-
-        // 获取方法名
-        signature.append(methodDeclaration.getName().getIdentifier());
-
-        // 获取全限定参数类型
-        signature.append("(");
-        List<?> parameters = methodDeclaration.parameters();
-        for (int i = 0; i < parameters.size(); i++) {
-            if (i > 0) {
-                signature.append(", ");
-            }
-            org.eclipse.jdt.core.dom.SingleVariableDeclaration param = (org.eclipse.jdt.core.dom.SingleVariableDeclaration) parameters.get(i);
-            Type type = Optional.ofNullable(param).map(SingleVariableDeclaration::getType).orElseThrow(RuntimeException::new);
-            String paramType = Optional.of(type)
-                    .map(Type::resolveBinding)
-                    .map(ITypeBinding::getQualifiedName)
-                    .orElse(type.toString());
-            signature.append(paramType);
-        }
-        signature.append(")");
-
-        // 获取全限定异常类型
-        List<?> exceptions = methodDeclaration.thrownExceptionTypes();
-        if (!exceptions.isEmpty()) {
-            signature.append(" throws ");
-            for (int i = 0; i < exceptions.size(); i++) {
-                if (i > 0) {
-                    signature.append(", ");
-                }
-                org.eclipse.jdt.core.dom.Name exceptionType = (org.eclipse.jdt.core.dom.Name) exceptions.get(i);
-                String exceptionTypeName = Optional.ofNullable(exceptionType).map(Expression::resolveTypeBinding).map(ITypeBinding::getQualifiedName).orElse("");
-                signature.append(exceptionTypeName);
-            }
-        }
-
-        return signature.toString();
-    }
-
-    /**
-     * 获取方法签名，包含全限定名
-     *
-     * @param methodElement 方法元素
-     * @return 包含全限定名的方法签名
-     */
-    private String getMethodSignature(ExecutableElement methodElement) {
-        if (methodElement == null) {
-            return "";
-        }
-        // 获取返回类型的全限定名
-        String returnType = Optional.of(methodElement).map(ExecutableElement::getReturnType).map(TypeMirror::toString).orElse("");
-
-        // 获取方法名
-        String methodName = methodElement.getSimpleName().toString();
-
-        // 获取参数类型的全限定名
-        String params = methodElement.getParameters().stream()
-                .map(t -> Optional.ofNullable(t).map(VariableElement::asType).map(TypeMirror::toString).orElse(""))
-                .collect(Collectors.joining(", "));
-
-        // 获取抛出异常类型的全限定名
-        String exceptions = methodElement.getThrownTypes().stream()
-                .map(exceptionType -> Optional.ofNullable(exceptionType).map(TypeMirror::toString).orElse(""))
-                .collect(Collectors.joining(", "));
-
-        // 拼接方法签名
-        String signature = "%s %s(%s)".formatted(returnType, methodName, params);
-        if (!exceptions.isEmpty()) {
-            signature += " throws " + exceptions;
-        }
-        return signature;
     }
 
 }
