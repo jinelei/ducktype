@@ -18,11 +18,11 @@
             <artifactId>ducktype-processor</artifactId>
             <version>1.0.0</version>
         </dependency>
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <version>1.18.36</version>
-        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>org.projectlombok</groupId>-->
+<!--            <artifactId>lombok</artifactId>-->
+<!--            <version>1.18.36</version>-->
+<!--        </dependency>-->
     </dependencies>
 
 
@@ -36,31 +36,26 @@
                     <encoding>UTF-8</encoding>
                 </configuration>
             </plugin>
-<!--            <plugin>-->
-<!--                <groupId>org.apache.maven.plugins</groupId>-->
-<!--                <artifactId>maven-compiler-plugin</artifactId>-->
-<!--                <version>3.14.0</version>-->
-<!--                <dependencies>-->
-<!--                    <dependency>-->
-<!--                        <groupId>com.jinelei</groupId>-->
-<!--                        <artifactId>ducktype-processor</artifactId>-->
-<!--                        <version>1.0.0</version>-->
-<!--                    </dependency>-->
-<!--                    <dependency>-->
-<!--                        <groupId>org.projectlombok</groupId>-->
-<!--                        <artifactId>lombok</artifactId>-->
-<!--                        <version>1.18.36</version>-->
-<!--                    </dependency>-->
-<!--                </dependencies>-->
-<!--                <configuration>-->
-<!--                    <source>17</source>-->
-<!--                    <target>17</target>-->
-<!--                    <encoding>UTF-8</encoding>-->
-<!--                    <annotationProcessors>-->
-<!--                        <annotationProcessor>com.jinelei.ducktype.processor.DuckTypeProcessor</annotationProcessor>-->
-<!--                    </annotationProcessors>-->
-<!--                </configuration>-->
-<!--            </plugin>-->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.14.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>com.jinelei</groupId>
+                        <artifactId>ducktype-processor</artifactId>
+                        <version>1.0.0</version>
+                    </dependency>
+                </dependencies>
+                <configuration>
+                    <source>21</source>
+                    <target>21</target>
+                    <encoding>UTF-8</encoding>
+                    <annotationProcessors>
+                        <annotationProcessor>com.jinelei.ducktype.processor.DuckTypeProcessor</annotationProcessor>
+                    </annotationProcessors>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 </project>

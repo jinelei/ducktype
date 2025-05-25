@@ -8,122 +8,109 @@ import javax.tools.Diagnostic;
 import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.InputStream;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.dom.*;
-import org.eclipse.jdt.core.dom.Name;
-import org.eclipse.jdt.core.dom.rewrite.ASTRewrite;
-import org.eclipse.jface.text.Document;
-import org.eclipse.text.edits.TextEdit;
 
 @SupportedAnnotationTypes("com.jinelei.ducktype.annotation.DuckType")
-@SupportedSourceVersion(SourceVersion.RELEASE_17)
 public class DuckTypeProcessor extends AbstractProcessor {
-
-    public DuckTypeProcessor() {
-        super();
-    }
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "进入DuckTypeProcessor.process方法");
         // 扫描带DuckType注解的接口
         Set<TypeElement> duckTypeInterfaces = new HashSet<>();
         for (TypeElement annotation : annotations) {
             for (Element element : roundEnv.getElementsAnnotatedWith(annotation)) {
-                if (element.getKind() == ElementKind.INTERFACE) {
+                if (element.getAnnotation(FunctionalInterface.class) != null && element.getKind() == ElementKind.INTERFACE) {
                     duckTypeInterfaces.add((TypeElement) element);
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到鸭子类型注解的接口：%s，当前数量: %d".formatted(element.getSimpleName(), duckTypeInterfaces.size()));
                 }
             }
         }
 
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "所有实现了DuckType注解的接口数量：%s".formatted(duckTypeInterfaces.size()));
-
         // 扫描所有类
         for (Element element : roundEnv.getRootElements()) {
             if (element.getKind() == ElementKind.CLASS) {
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "+++++++++++++++++++++++++++++++++++++++++");
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "处理类类型【%s】".formatted(element.getSimpleName()));
                 TypeElement classElement = (TypeElement) element;
                 for (TypeElement duckTypeInterface : duckTypeInterfaces) {
+                    final List<Element> needEnhanceElementList = new ArrayList<>();
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "++++++++++++++++++++++++++++++++");
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "处理鸭子类型注解的接口【%s】".formatted(duckTypeInterface.getQualifiedName()));
                     // 检查类是否已实现该接口
                     boolean alreadyImplemented = false;
                     for (TypeMirror iface : classElement.getInterfaces()) {
                         if (iface.toString().equals(duckTypeInterface.getQualifiedName().toString())) {
                             alreadyImplemented = true;
+                            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类【%s】已实现接口【%s】".formatted(classElement.getSimpleName(), duckTypeInterface.getSimpleName()));
                             break;
                         }
                     }
 
                     if (!alreadyImplemented) {
                         // 检查方法签名是否匹配
-                        boolean allMethodsMatch = true;
                         for (Element methodElement : duckTypeInterface.getEnclosedElements()) {
                             if (methodElement.getKind() == ElementKind.METHOD) {
-                                boolean methodFound = false;
                                 for (Element classMethodElement : classElement.getEnclosedElements()) {
                                     if (classMethodElement.getKind() == ElementKind.METHOD) {
-                                        if (isMethodSignatureMatch((ExecutableElement) methodElement, (ExecutableElement) classMethodElement)) {
-                                            methodFound = true;
+                                        if (getMethodSignature((ExecutableElement) methodElement).equals(getMethodSignature((ExecutableElement) classMethodElement))) {
+                                            needEnhanceElementList.add(classMethodElement);
+                                            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类【%s】未实现接口【%s】，方法匹配【%s】".formatted(classElement.getSimpleName(), duckTypeInterface.getSimpleName(), methodElement.getSimpleName()));
                                             break;
                                         }
                                     }
                                 }
-                                if (!methodFound) {
-                                    allMethodsMatch = false;
-                                    break;
-                                }
                             }
                         }
 
-                        if (allMethodsMatch) {
+                        if (!needEnhanceElementList.isEmpty()) {
                             // 为类添加实现接口的代码
-
-                            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类源码：%s".formatted(classElement.toString()));
-                            addInterfaceImplementation(classElement, duckTypeInterface);
+                            modifySourceCode(classElement, duckTypeInterface, needEnhanceElementList);
                         }
                     }
+                    processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "--------------------------------");
                 }
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "-----------------------------------------");
             }
         }
         return true;
     }
 
+    @Override
+    public SourceVersion getSupportedSourceVersion() {
+        return SourceVersion.latestSupported();
+    }
+
     /**
-     * 检查两个方法签名是否匹配
+     * 获取方法签名
      *
-     * @param interfaceMethod 接口方法
-     * @param classMethod     类方法
-     * @return 是否匹配
+     * @param methodElement 方法元素
+     * @return 方法签名
      */
-    private boolean isMethodSignatureMatch(ExecutableElement interfaceMethod, ExecutableElement classMethod) {
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "检查方法签名是否和Ducktype注解接口相似：接口信息：方法名：%s, 参数：%s, 返回值：%s".formatted(interfaceMethod.getSimpleName(), interfaceMethod.getParameters().size(), interfaceMethod.getReturnType().toString()));
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "检查方法签名是否和Ducktype注解接口相似：类信息：方法名：%s, 参数：%s, 返回值：%s".formatted(classMethod.getSimpleName(), classMethod.getParameters().size(), classMethod.getReturnType().toString()));
+    private String getMethodSignature(ExecutableElement methodElement) {
+        return "%s %s(%s)".formatted(
+                methodElement.getReturnType().toString(),
+                methodElement.getSimpleName(),
+                methodElement.getParameters().stream().map(param -> "%s %s".formatted(param.asType().toString(), param.getSimpleName())).collect(Collectors.joining(", "))
+        );
+    }
 
-        if (!interfaceMethod.getSimpleName().equals(classMethod.getSimpleName())) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "检查方法签名是否和Ducktype注解接口相似：方法名不匹配");
-            return false;
-        }
-
-        if (interfaceMethod.getParameters().size() != classMethod.getParameters().size()) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "检查方法签名是否和Ducktype注解接口相似：参数个数不匹配");
-            return false;
-        }
-
-        for (int i = 0; i < interfaceMethod.getParameters().size(); i++) {
-            VariableElement interfaceParam = interfaceMethod.getParameters().get(i);
-            VariableElement classParam = classMethod.getParameters().get(i);
-            if (!interfaceParam.asType().toString().equals(classParam.asType().toString())) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "检查方法签名是否和Ducktype注解接口相似：参数类型不匹配");
-                return false;
-            }
-        }
-
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "检查方法签名是否和Ducktype注解接口相似：方法签名匹配");
-        return true;
+    /**
+     * 获取方法签名
+     *
+     * @param methodElement 方法元素
+     * @return 方法签名
+     */
+    private String getMethodSignature(MethodDeclaration methodElement) {
+        return "%s %s(%s)".formatted(
+                methodElement.getReturnType2().toString(),
+                methodElement.getName(),
+                methodElement.typeParameters().stream().collect(Collectors.joining(", "))
+        );
     }
 
     /**
@@ -132,50 +119,74 @@ public class DuckTypeProcessor extends AbstractProcessor {
      * @param classElement     类元素
      * @param interfaceElement 接口元素
      */
-    private void addInterfaceImplementation(TypeElement classElement, TypeElement interfaceElement) throws RuntimeException {
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "为类添加实现接口的代码：类名: %s, 接口名: %s".formatted(classElement.getSimpleName(), interfaceElement.getQualifiedName()));
+    private void modifySourceCode(TypeElement classElement, TypeElement interfaceElement, List<Element> needEnhanceElementList) throws RuntimeException {
+        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "为类【%s】添加实现接口【%s】的代码".formatted(classElement.getSimpleName(), interfaceElement.getQualifiedName()));
         // 使用Eclipse JDT解析源代码
-        ASTParser parser = ASTParser.newParser(AST.JLS17);
+        ASTParser parser = ASTParser.newParser(AST.getJLSLatest());
         parser.setKind(ASTParser.K_COMPILATION_UNIT);
         parser.setSource(getClassSource(classElement).toCharArray());
         parser.setResolveBindings(true);
         CompilationUnit cu = (CompilationUnit) parser.createAST(null);
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "解析源代码成功： %b".formatted(Objects.nonNull(cu)));
+        AST ast = cu.getAST();
 
-        // 查找类声明
-        List<TypeDeclaration> types = cu.types();
-        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类声明数量：%s".formatted(cu.types().size()));
-        for (TypeDeclaration type : types) {
-            if (type.getName().toString().equals(classElement.getSimpleName().toString())) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到类声明：%s".formatted(type.getName().toString()));
-                // 添加接口实现
-                AST ast = cu.getAST();
-                SimpleName typeName = ast.newSimpleName(interfaceElement.getSimpleName().toString());
-                SimpleType interfaceType = ast.newSimpleType(typeName);
-                type.superInterfaceTypes().add(interfaceType);
+        cu.types().stream()
+                .filter(t -> t instanceof TypeDeclaration)
+                .filter(t -> ((TypeDeclaration) t).getName().toString().equals(classElement.getSimpleName().toString()))
+                .forEach(t -> {
+                    // 添加接口实现
+                    SimpleName typeName = ast.newSimpleName(interfaceElement.getSimpleName().toString());
+                    SimpleType interfaceType = ast.newSimpleType(typeName);
+                    ((TypeDeclaration) t).superInterfaceTypes().add(interfaceType);
 
-                // 为实现的方法添加 @Override 注解
-                for (Element methodElement : interfaceElement.getEnclosedElements()) {
-                    if (methodElement.getKind() == ElementKind.METHOD) {
-                        ExecutableElement interfaceMethod = (ExecutableElement) methodElement;
-                        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到接口方法：%s".formatted(interfaceMethod.getSimpleName()));
-                        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类方法数量：%d".formatted(type.getMethods().length));
-                        for (MethodDeclaration classMethod : type.getMethods()) {
-                            if (classMethod.getName().toString().equals(interfaceMethod.getSimpleName().toString())
-                                    && classMethod.parameters().size() == interfaceMethod.getParameters().size()
-                            ) {
-                                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到类方法：%s".formatted(classMethod.getName().toString()));
-                                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "方法匹配成功：%s".formatted(classMethod.getName().toString()));
-                                // 添加 @Override 注解
-                                NormalAnnotation overrideAnnotation = ast.newNormalAnnotation();
-                                overrideAnnotation.setTypeName(ast.newSimpleName("Override"));
-                                classMethod.modifiers().add(0, overrideAnnotation);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+                    // 为实现的方法添加 @Override 注解
+                    interfaceElement.getEnclosedElements().stream()
+                            .filter(mm -> mm instanceof ExecutableElement)
+                            .map(e -> ((ExecutableElement) e))
+                            .forEach(mm -> {
+                                Arrays.stream(((TypeDeclaration) t).getMethods()).filter(m -> getMethodSignature(m).equals(getMethodSignature(mm)))
+                                        .forEach(m -> {
+                                            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "方法签名匹配，准备添加Override：%s".formatted(m.getName().toString()));
+                                            // 添加 @Override 注解
+                                            NormalAnnotation overrideAnnotation = ast.newNormalAnnotation();
+                                            overrideAnnotation.setTypeName(ast.newSimpleName("Override"));
+                                            m.modifiers().add(0, overrideAnnotation);
+                                        });
+                            });
+                });
+//
+//        // 查找类声明
+//        List<TypeDeclaration> types = cu.types();
+//        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类声明数量：%s".formatted(cu.types().size()));
+//        for (TypeDeclaration type : types) {
+//            if (type.getName().toString().equals(classElement.getSimpleName().toString())) {
+//                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到类声明：%s".formatted(type.getName().toString()));
+//                // 添加接口实现
+//                AST ast = cu.getAST();
+//                SimpleName typeName = ast.newSimpleName(interfaceElement.getSimpleName().toString());
+//                SimpleType interfaceType = ast.newSimpleType(typeName);
+//                type.superInterfaceTypes().add(interfaceType);
+//
+//                // 为实现的方法添加 @Override 注解
+//                for (Element methodElement : interfaceElement.getEnclosedElements()) {
+//                    if (methodElement.getKind() == ElementKind.METHOD) {
+//                        ExecutableElement interfaceMethod = (ExecutableElement) methodElement;
+//                        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "找到接口方法：%s".formatted(interfaceMethod.getSimpleName()));
+//                        processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类方法数量：%d".formatted(type.getMethods().length));
+//                        for (MethodDeclaration classMethod : type.getMethods()) {
+//                            if (classMethod.getName().toString().equals(interfaceMethod.getSimpleName().toString())
+//                                    && classMethod.parameters().size() == interfaceMethod.getParameters().size()
+//                            ) {
+//                                // 添加 @Override 注解
+//                                NormalAnnotation overrideAnnotation = ast.newNormalAnnotation();
+//                                overrideAnnotation.setTypeName(ast.newSimpleName("Override"));
+//                                classMethod.modifiers().add(0, overrideAnnotation);
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//        }
+
         try {
             processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "修改后的代码：--------------------\n%s".formatted(cu.toString()));
             // 保存到target/generated-sources
@@ -211,4 +222,5 @@ public class DuckTypeProcessor extends AbstractProcessor {
             throw new RuntimeException("Source file not found: " + classElement.getQualifiedName().toString());
         }
     }
+
 }
