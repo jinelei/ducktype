@@ -2,7 +2,7 @@ package com.jinelei.ducktype.sample;
 
 import java.util.List;
 
-public class SampleClass {
+public class SampleClass1 {
     public void methodVoid() {
 
     }
@@ -19,7 +19,4 @@ public class SampleClass {
         return List.of();
     }
 
-    public String[] methodArray() {
-        return new String[0];
-    }
 }

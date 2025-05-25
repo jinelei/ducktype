@@ -2,8 +2,17 @@ package com.jinelei.ducktype.sample;
 
 import com.jinelei.ducktype.annotation.DuckType;
 
+import java.util.List;
+
 @DuckType
 public interface SampleInterface {
-    void execute();
-    String getName();
+    void methodVoid();
+
+    int methodInt();
+
+    String methodString();
+
+    List<String> methodList();
+
+    String[] methodArray();
 }
