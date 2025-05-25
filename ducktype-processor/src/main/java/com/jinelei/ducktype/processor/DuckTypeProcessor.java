@@ -151,10 +151,17 @@ public class DuckTypeProcessor extends AbstractProcessor {
                 .map(t -> (TypeDeclaration) t)
                 .filter(t -> t.getName().toString().equals(classElement.getSimpleName().toString()))
                 .forEach(t -> {
-                    // 添加接口实现
+                    // 处理导入语句
+                    List<Object> imports = safeConvertToListObject.apply(cu.imports());
+                    ImportDeclaration importDeclaration = ast.newImportDeclaration();
+                    importDeclaration.setName(ast.newName(interfaceElement.getQualifiedName().toString()));
+                    imports.add(importDeclaration);
+
+                    // 处理类的实现接口
+                    List<Object> superInterfaceTypes = safeConvertToListObject.apply(t.superInterfaceTypes());
                     SimpleName typeName = ast.newSimpleName(interfaceElement.getSimpleName().toString());
                     SimpleType interfaceType = ast.newSimpleType(typeName);
-                    safeConvertToListObject.apply(t.superInterfaceTypes()).add(interfaceType);
+                    superInterfaceTypes.add(interfaceType);
 
                     // 为实现的方法添加 @Override 注解
                     interfaceElement.getEnclosedElements().stream()
