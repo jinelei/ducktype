@@ -177,7 +177,7 @@ public class DuckTypeProcessor extends AbstractProcessor {
             }
         }
         try {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "修改后的代码：%s".formatted(cu.toString()));
+            processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "修改后的代码：--------------------\n%s".formatted(cu.toString()));
             // 保存到target/generated-sources
             File dir = new File("target/generated-sources");
             if (!dir.exists()) {
@@ -203,7 +203,7 @@ public class DuckTypeProcessor extends AbstractProcessor {
             try (InputStream in = fileObject.openInputStream()) {
                 byte[] bytes = in.readAllBytes();
                 String sourceCode = new String(bytes);
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类源码：%s".formatted(sourceCode));
+                processingEnv.getMessager().printMessage(Diagnostic.Kind.WARNING, "类源码：--------------------\n%s".formatted(sourceCode));
                 return sourceCode;
             }
         } catch (Exception e) {
