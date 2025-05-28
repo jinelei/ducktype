@@ -9,13 +9,16 @@ import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 
+import com.jinelei.ducktype.annotation.AddField;
 import com.jinelei.ducktype.annotation.DuckType;
 import com.squareup.javapoet.*;
 
 import java.io.IOException;
 import java.util.*;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 @SupportedAnnotationTypes("com.jinelei.ducktype.annotation.DuckType")
 public class DuckTypeProcessor extends AbstractProcessor {
@@ -24,6 +27,16 @@ public class DuckTypeProcessor extends AbstractProcessor {
     private Filer filer;
     private Messager messager;
     private final Map<TypeMirror, List<TypeMirror>> interfaceSet = new HashMap<>();
+
+    private final Function<ExecutableElement, String> methodSignatureFunction = (executableElement) -> {
+        if (executableElement.asType() instanceof ExecutableType executableType) {
+            TypeMirror returnType = executableType.getReturnType();
+            String methodName = executableElement.getSimpleName().toString();
+            String paramList = executableType.getParameterTypes().stream().map(TypeMirror::toString).collect(Collectors.joining(","));
+            return "%s %s(%s)".formatted(returnType.toString(), methodName, paramList);
+        }
+        return null;
+    };
 
     private BiFunction<TypeMirror, TypeMirror, Boolean> equalsFunction = (mirror1, mirror2) -> {
         if (!(mirror1 instanceof ExecutableType et1 && mirror2 instanceof ExecutableType et2)) {
@@ -45,7 +58,6 @@ public class DuckTypeProcessor extends AbstractProcessor {
 
     @Override
     public SourceVersion getSupportedSourceVersion() {
-        messager.printMessage(Diagnostic.Kind.NOTE, "getSupportedSourceVersion is running...");
         return SourceVersion.latestSupported();
     }
 
@@ -63,10 +75,44 @@ public class DuckTypeProcessor extends AbstractProcessor {
         messager.printMessage(Diagnostic.Kind.NOTE, "DuckTypeProcessor process...");
 
         // 第一阶段：收集所有带有DuckType注解的接口及其方法
-        collectDuckTypeInterfaces(roundEnv);
+//        collectDuckTypeInterfaces(roundEnv);
 
         // 第二阶段：检查所有类，为匹配的类生成增强类
-        processClasses(roundEnv);
+//        processClasses(roundEnv);
+        for (Element element : roundEnv.getRootElements()) {
+            if (element.getKind() != ElementKind.CLASS) {
+                continue;
+            }
+
+            TypeElement classElement = (TypeElement) element;
+            if (classElement.getModifiers().contains(Modifier.FINAL)) {
+                continue;
+            }
+
+            messager.printMessage(Diagnostic.Kind.NOTE, "Found dest class %s".formatted(classElement.getSimpleName()));
+            classElement.getEnclosedElements().stream()
+                    .filter(e -> e.getKind() == ElementKind.METHOD)
+                    .map(e -> (ExecutableElement) e)
+                    .forEach(method -> {
+                        int size = Math.max(0, Math.min(method.getParameters().size(), method.getTypeParameters().size()));
+                        messager.printMessage(Diagnostic.Kind.NOTE, "\t method: %s %s(%s)".formatted(
+                                method.getReturnType(),
+                                method.getSimpleName().toString(),
+                                IntStream.range(0, size).mapToObj(i -> "%s %s".formatted(
+                                        method.getTypeParameters().get(i).asType(),
+                                        method.getParameters().get(i).getSimpleName().toString()
+                                )).collect(Collectors.joining(", "))
+                        ));
+                    });
+
+            classElement.getEnclosedElements().stream()
+                    .filter(e -> e.getKind() == ElementKind.FIELD)
+                    .map(e -> (VariableElement) e)
+                    .forEach(field -> {
+                        messager.printMessage(Diagnostic.Kind.NOTE, "\t field: %s %s".formatted(field.asType().toString(), field.getSimpleName().toString()));
+                    });
+
+        }
 
         return true;
     }
@@ -130,17 +176,6 @@ public class DuckTypeProcessor extends AbstractProcessor {
         String className = originalClass.getSimpleName().toString();
         messager.printMessage(Diagnostic.Kind.NOTE, "Generating enhanced class: %s for interfaces: %s".formatted(className, interfaces));
 
-
-        // 检查文件是否已存在
-        try {
-            String qualifiedName = packageName + "." + className;
-            filer.getResource(StandardLocation.CLASS_OUTPUT, "", qualifiedName.replace('.', '/') + ".java");
-            messager.printMessage(Diagnostic.Kind.NOTE, "Enhanced class %s already exists, skipping generation.".formatted(qualifiedName));
-            return;
-        } catch (IOException ignored) {
-            // 文件不存在，继续生成
-        }
-
         TypeSpec.Builder classBuilder = TypeSpec.classBuilder(className).addModifiers(Modifier.PUBLIC).superclass(ClassName.get(originalClass));
 
         interfaces.keySet().forEach(interfaceName -> {
@@ -170,6 +205,12 @@ public class DuckTypeProcessor extends AbstractProcessor {
             javaFile.writeTo(filer);
         } catch (IOException e) {
             messager.printMessage(Diagnostic.Kind.ERROR, "Failed to generate enhanced class: %s".formatted(e.getMessage()));
+        }
+    }
+
+    record InstanceAndType(TypeMirror type, ExecutableElement element) {
+        public static InstanceAndType of(ExecutableElement element) {
+            return new InstanceAndType(element.asType(), element);
         }
     }
 

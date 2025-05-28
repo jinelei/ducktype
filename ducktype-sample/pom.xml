@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -19,11 +19,11 @@
             <artifactId>ducktype-processor</artifactId>
             <version>1.0.0</version>
         </dependency>
-        <!--        <dependency>-->
-        <!--            <groupId>org.projectlombok</groupId>-->
-        <!--            <artifactId>lombok</artifactId>-->
-        <!--            <version>1.18.36</version>-->
-        <!--        </dependency>-->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>1.18.36</version>
+        </dependency>
     </dependencies>
 
 
@@ -52,7 +52,18 @@
                     <source>21</source>
                     <target>21</target>
                     <encoding>UTF-8</encoding>
+                    <compilerArgs>
+                        <arg>-AsourceDir=${project.build.sourceDirectory}</arg>
+                        <arg>-AtargetDir=${project.build.directory}</arg>
+                    </compilerArgs>
+                    <compileSourceRoots>
+                        <compileSourceRoot>${project.build.directory}/generated-sources/annotations</compileSourceRoot>
+                        <compileSourceRoot>${project.build.sourceDirectory}</compileSourceRoot>
+                    </compileSourceRoots>
                     <annotationProcessors>
+                        <annotationProcessor>com.jinelei.ducktype.processor.AddFieldProcessor</annotationProcessor>
+                        <annotationProcessor>lombok.launch.AnnotationProcessorHider$AnnotationProcessor
+                        </annotationProcessor>
                         <annotationProcessor>com.jinelei.ducktype.processor.DuckTypeProcessor</annotationProcessor>
                     </annotationProcessors>
                 </configuration>
