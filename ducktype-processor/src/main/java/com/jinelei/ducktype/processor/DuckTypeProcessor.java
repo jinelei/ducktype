@@ -18,6 +18,9 @@ import org.eclipse.jdt.core.dom.*;
 
 @SupportedAnnotationTypes("com.jinelei.ducktype.annotation.DuckType")
 public class DuckTypeProcessor extends AbstractProcessor {
+    private Messager messager;
+    private String targetDirectory;
+    private String targetGeneratedDirectory;
     /**
      * 安全地将 List 转换为 List<Object> 类型，不创建新对象
      */
@@ -124,6 +127,14 @@ public class DuckTypeProcessor extends AbstractProcessor {
         return SourceVersion.latestSupported();
     }
 
+    @Override
+    public synchronized void init(ProcessingEnvironment processingEnv) {
+        super.init(processingEnv);
+        messager = processingEnv.getMessager();
+        targetDirectory = processingEnv.getOptions().get("targetDirectory");
+        targetGeneratedDirectory = "%s/generated-sources/annotations".formatted(targetDirectory);
+    }
+
     /**
      * 为类添加实现接口的代码
      *
@@ -169,10 +180,12 @@ public class DuckTypeProcessor extends AbstractProcessor {
                             .map(e -> ((ExecutableElement) e))
                             .forEach(mm -> {
                                 final String interfaceMethodSignature = getMethodSignature.apply(mm);
+                                messager.printMessage(Diagnostic.Kind.NOTE, "接口方法签名：%s".formatted(interfaceMethodSignature));
                                 Arrays.stream(t.getMethods())
                                         .filter(mmm -> interfaceMethodSignature.equals(getMethodSignature.apply(mm)))
                                         .filter(overrideAnnotationPresent)
                                         .forEach(mmm -> {
+                                            messager.printMessage(Diagnostic.Kind.NOTE, "类方法签名：%s".formatted(getMethodSignature.apply(mm)));
                                             // 添加 @Override 注解
                                             NormalAnnotation overrideAnnotation = ast.newNormalAnnotation();
                                             overrideAnnotation.setTypeName(ast.newSimpleName("Override"));
@@ -182,37 +195,15 @@ public class DuckTypeProcessor extends AbstractProcessor {
                 });
 
         processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的源代码：--------------------\n%s".formatted(cu.toString()));
-
-        // 使用 Filer 创建新的源文件
-        File file = Optional.of(sourceFile)
-                .map(FileObject::toUri)
-                .map(File::new).orElseThrow(() -> new RuntimeException("源码文件未找到"));
-        if (file.delete()) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "删除原文件成功");
-        } else {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "删除原文件失败");
-        }
-        try {
-            if (file.createNewFile()) {
-                processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "创建新文件成功");
-            }
-        } catch (IOException e) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "创建新文件失败: " + e.getMessage());
-            throw new RuntimeException(e);
-        }
-        try (FileWriter writer = new FileWriter(file)) {
-            writer.write(cu.toString());
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.NOTE, "修改后的代码写入文件成功");
-        } catch (IOException e) {
-            processingEnv.getMessager().printMessage(Diagnostic.Kind.ERROR, "修改后的代码写入文件失败: " + e.getMessage());
-            throw new RuntimeException(e);
-        }
+        // 指定生成路径为 target/generated-sources/annotations
+        writeSources(classElement, cu);
     }
 
     private void writeSources(TypeElement classElement, CompilationUnit cu) {
         try {
             // 保存到target/generated-sources
-            File dir = new File("ducktype-sample/target/generated-sources/annotations");
+            File dir = new File("ducktype-sample/target/generated-sources/annotations/com/jinelei/ducktype/sample");
+
             if (!dir.exists()) {
                 if (!dir.mkdirs()) {
                     throw new RuntimeException("创建目录失败: " + dir.getAbsolutePath());

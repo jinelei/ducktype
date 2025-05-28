@@ -6,13 +6,7 @@ import java.util.List;
 
 @DuckType
 public interface SampleInterface {
-    void methodVoid();
 
-    int methodInt();
+    String fetchName(String name);
 
-    String methodString();
-
-    List<String> methodList();
-
-    String[] methodArray();
 }
