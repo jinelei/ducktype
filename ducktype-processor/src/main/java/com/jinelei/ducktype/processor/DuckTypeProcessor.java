@@ -17,7 +17,8 @@ import java.util.stream.Collectors;
 
 import org.eclipse.jdt.core.dom.*;
 
-@SupportedAnnotationTypes("com.jinelei.ducktype.annotation.DuckType")
+import com.jinelei.ducktype.annotation.DuckType;
+
 public class DuckTypeProcessor extends AbstractProcessor {
     private Messager messager;
     private String targetDirectory;
@@ -177,6 +178,11 @@ public class DuckTypeProcessor extends AbstractProcessor {
     @Override
     public SourceVersion getSupportedSourceVersion() {
         return SourceVersion.latestSupported();
+    }
+
+    @Override
+    public Set<String> getSupportedAnnotationTypes() {
+        return Collections.singleton(DuckType.class.getName());
     }
 
     @Override
